@@ -52,7 +52,7 @@ function CustomerRow({ c }: { c: Record<string, unknown> }) {
     <div className="grid grid-cols-[1fr_140px_100px_80px] gap-3 items-center px-4 py-3 border-b border-[--border] text-sm">
       <div>
         <div className="font-semibold">{(c.nome as string) || "Sem nome"}</div>
-        <div className="text-[--text-dim] text-[11px] font-mono">{c.telefone}</div>
+        <div className="text-[--text-dim] text-[11px] font-mono">{(c.telefone as string)}</div>
       </div>
       <div className="text-[--text-dim] font-mono text-[11px]">{ultima_visita ? fmtDate(ultima_visita) : "sem visita"}</div>
       <div className="font-mono text-[11px] text-[--text-dim]">{(c.ciclo_mediano_dias as number) ? `${c.ciclo_mediano_dias}d ciclo` : "—"}</div>
