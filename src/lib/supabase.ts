@@ -1,4 +1,4 @@
-export async function query<T = any>(table: string, params = ""): Promise<T[]> {
+export async function query<T = Record<string, unknown>>(table: string, params = ""): Promise<T[]> {
   try {
     const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
