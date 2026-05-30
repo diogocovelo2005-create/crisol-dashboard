@@ -1,0 +1,51 @@
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+const headers = {
+  apikey: SUPABASE_KEY,
+  Authorization: `Bearer ${SUPABASE_KEY}`,
+  "Content-Type": "application/json",
+};
+
+export async function query<T = any>(table: string, params = ""): Promise<T[]> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { headers, cache: "no-store" });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export function fmt(n: number | null | undefined) {
+  if (n === null || n === undefined) return "—";
+  return n.toLocaleString("pt-PT");
+}
+
+export function fmtDate(iso: string | null) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("pt-PT", { day: "2-digit", month: "short" });
+}
+
+export function fmtTime(iso: string | null) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" });
+}
+
+export function daysBetween(d1: string, d2: string) {
+  return Math.floor((new Date(d2).getTime() - new Date(d1).getTime()) / 86400000);
+}
+
+export function groupByDay(items: any[], dateField: string, days = 14) {
+  const now = new Date();
+  const buckets: Record<string, any> = {};
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    buckets[key] = { day: d.toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit" }), _items: [] };
+  }
+  items.forEach(item => {
+    const key = item[dateField]?.slice(0, 10);
+    if (key && buckets[key]) buckets[key]._items.push(item);
+  });
+  return Object.values(buckets);
+}
+
+export const MISSED_DISPOSITIONS = ["no answer", "busy", "cancel", "failed", "call failed"];

@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0a0a0b;
+  --card: #141416;
+  --card-hover: #1a1a1e;
+  --border: #262629;
+  --text: #e4e4e7;
+  --text-dim: #71717a;
+  --accent: #f59e0b;
+  --green: #22c55e;
+  --red: #ef4444;
+  --blue: #3b82f6;
+  --purple: #a855f7;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Outfit', system-ui, sans-serif;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
