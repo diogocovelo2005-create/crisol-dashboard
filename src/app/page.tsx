@@ -1,10 +1,10 @@
-export const dynamic = "force-dynamic";
-
-export default function Page() {
+export default function Home() {
   return (
-    <div style={{ padding: "40px", fontFamily: "system-ui" }}>
-      <h1>✂️ Crisol Dashboard</h1>
-      <p>Se vês isto, o site está online!</p>
-    </div>
+    <html>
+      <body>
+        <h1>✂️ Crisol Dashboard</h1>
+        <p>Funciona!</p>
+      </body>
+    </html>
   );
 }
