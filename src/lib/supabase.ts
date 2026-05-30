@@ -1,16 +1,35 @@
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-const headers = {
-  apikey: SUPABASE_KEY,
-  Authorization: `Bearer ${SUPABASE_KEY}`,
-  "Content-Type": "application/json",
-};
-
 export async function query<T = any>(table: string, params = ""): Promise<T[]> {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { headers, cache: "no-store" });
-  if (!res.ok) return [];
-  return res.json();
+  try {
+    const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      console.warn("Supabase credentials not available");
+      return [];
+    }
+
+    const headers = {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+    };
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { 
+      headers, 
+      cache: "no-store" as const,
+      next: { revalidate: 0 }
+    });
+    
+    if (!res.ok) {
+      console.error(`Supabase query failed: ${res.status}`);
+      return [];
+    }
+    
+    return res.json() as Promise<T[]>;
+  } catch (error) {
+    console.error("Query error:", error);
+    return [];
+  }
 }
 
 export function fmt(n: number | null | undefined) {
@@ -32,9 +51,9 @@ export function daysBetween(d1: string, d2: string) {
   return Math.floor((new Date(d2).getTime() - new Date(d1).getTime()) / 86400000);
 }
 
-export function groupByDay(items: any[], dateField: string, days = 14) {
+export function groupByDay(items: Array<Record<string, unknown>>, dateField: string, days = 14) {
   const now = new Date();
-  const buckets: Record<string, any> = {};
+  const buckets: Record<string, { day: string; _items: Array<Record<string, unknown>> }> = {};
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(d.getDate() - i);
@@ -42,7 +61,7 @@ export function groupByDay(items: any[], dateField: string, days = 14) {
     buckets[key] = { day: d.toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit" }), _items: [] };
   }
   items.forEach(item => {
-    const key = item[dateField]?.slice(0, 10);
+    const key = (item[dateField] as string | undefined)?.slice(0, 10);
     if (key && buckets[key]) buckets[key]._items.push(item);
   });
   return Object.values(buckets);
