@@ -5,7 +5,13 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from "recharts";
-import { query, fmt, fmtDate, fmtTime, daysBetween, groupByDay, MISSED_DISPOSITIONS } from "@/lib/supabase";
+import {
+  query, fmt, fmtEur, fmtDate, fmtTime, daysBetween, groupByDay,
+  filterByPeriod, getDateRange, MISSED_DISPOSITIONS, exportCSV,
+  AVG_SERVICE_PRICE, AVG_CONV_MINUTES, CONVERSION_RATE,
+} from "@/lib/supabase";
+
+/* ── Shared UI Components ────────────────────────────────────────── */
 
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; color: string }>; label?: string }) {
   if (!active || !payload?.length) return null;
@@ -21,15 +27,15 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
   );
 }
 
-function KpiCard({ label, value, sub, color, icon }: { label: string; value: string; sub?: string; color: string; icon: string }) {
+function KpiCard({ label, value, sub, color, icon, large }: { label: string; value: string; sub?: string; color: string; icon: string; large?: boolean }) {
   return (
-    <div className="bg-[--card] border border-[--border] rounded-xl p-5 flex-1 min-w-[160px] hover:border-[--accent] hover:bg-[--card-hover] transition-all group">
+    <div className={`bg-[--card] border border-[--border] rounded-xl flex-1 min-w-[160px] hover:border-[--accent] hover:bg-[--card-hover] transition-all group ${large ? "p-6" : "p-5"}`}>
       <div className="flex items-center gap-2 mb-3">
-        <span className="text-lg">{icon}</span>
+        <span className={large ? "text-xl" : "text-lg"}>{icon}</span>
         <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-[--text-dim]">{label}</span>
       </div>
-      <div className="text-3xl font-bold font-mono leading-none" style={{ color }}>{value}</div>
-      {sub && <div className="text-xs text-[--text-dim] mt-2 font-mono">{sub}</div>}
+      <div className={`font-bold font-mono leading-none ${large ? "text-4xl" : "text-3xl"}`} style={{ color }}>{value}</div>
+      {sub && <div className={`text-[--text-dim] mt-2 font-mono ${large ? "text-sm" : "text-xs"}`}>{sub}</div>}
     </div>
   );
 }
@@ -39,6 +45,28 @@ function ChartCard({ title, children, className = "" }: { title: string; childre
     <div className={`bg-[--card] border border-[--border] rounded-xl p-6 ${className}`}>
       <h3 className="text-[11px] font-mono uppercase tracking-[0.15em] text-[--text-dim] mb-5 font-medium">{title}</h3>
       {children}
+    </div>
+  );
+}
+
+function PeriodSelector({ period, onChange }: { period: string; onChange: (p: string) => void }) {
+  const options = [
+    { id: "7d", label: "7 dias" },
+    { id: "14d", label: "14 dias" },
+    { id: "30d", label: "30 dias" },
+    { id: "this_month", label: "Este mês" },
+    { id: "last_month", label: "Mês anterior" },
+  ];
+  return (
+    <div className="flex gap-1 bg-[--card] border border-[--border] rounded-lg p-1">
+      {options.map(o => (
+        <button key={o.id} onClick={() => onChange(o.id)}
+          className={`px-3 py-1.5 text-[11px] font-mono rounded-md transition-all cursor-pointer border-none ${
+            period === o.id ? "bg-[--accent] text-black font-bold" : "bg-transparent text-[--text-dim] hover:text-[--text]"
+          }`}>
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -71,13 +99,36 @@ function ConversationRow({ conv, messages }: { conv: Record<string, unknown>; me
       </div>
       {lastMsg && (
         <div className="text-[--text-dim] text-xs truncate">
-          {(lastMsg.direcao as string) === "outbound" ? "🤖 " : "👤 "}
-          {((lastMsg.conteudo as string) || "")?.slice(0, 100)}
+          {(lastMsg.direcao as string) === "outbound" ? "🤖 " : "👤 "}{((lastMsg.conteudo as string) || "")?.slice(0, 100)}
         </div>
       )}
     </div>
   );
 }
+
+function AutomationRow({ log }: { log: Record<string, unknown> }) {
+  const typeMap: Record<string, { icon: string; label: string }> = {
+    missed_call: { icon: "📞", label: "Chamada perdida" },
+    reactivation: { icon: "🔄", label: "Reativação" },
+    promotion: { icon: "🎯", label: "Promoção" },
+  };
+  const t = typeMap[(log.tipo as string) || ""] || { icon: "⚡", label: (log.tipo as string) || "Automação" };
+  return (
+    <div className="grid grid-cols-[auto_1fr_120px_80px] gap-3 items-center px-4 py-3 border-b border-[--border] text-sm">
+      <span className="text-lg">{t.icon}</span>
+      <div>
+        <div className="font-semibold text-xs">{t.label}</div>
+        <div className="text-[--text-dim] text-[11px] font-mono truncate max-w-[300px]">{(log.telefone_destino as string) || "—"}</div>
+      </div>
+      <div className="text-[--text-dim] font-mono text-[11px]">{fmtDate(log.created_at as string)} {fmtTime(log.created_at as string)}</div>
+      <div className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md text-center ${
+        (log.status as string) === "sent" ? "text-green-500 bg-green-500/10" : "text-amber-500 bg-amber-500/10"
+      }`}>{(log.status as string) || "—"}</div>
+    </div>
+  );
+}
+
+/* ── Main Dashboard ──────────────────────────────────────────────── */
 
 export default function Dashboard() {
   const [barbershops, setBarbershops] = useState<Array<Record<string, unknown>>>([]);
@@ -86,20 +137,23 @@ export default function Dashboard() {
   const [messages, setMessages] = useState<Array<Record<string, unknown>>>([]);
   const [calls, setCalls] = useState<Array<Record<string, unknown>>>([]);
   const [conversations, setConversations] = useState<Array<Record<string, unknown>>>([]);
+  const [automations, setAutomations] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [tab, setTab] = useState("overview");
+  const [period, setPeriod] = useState("30d");
 
   const fetchData = useCallback(async (shopId: string | null) => {
     setLoading(true);
     try {
       const shopFilter = shopId ? `barbershop_id=eq.${shopId}&` : "";
-      const [shops, custs, msgs, cls, convs] = await Promise.all([
+      const [shops, custs, msgs, cls, convs, autos] = await Promise.all([
         query("barbershops", "select=*"),
         query("customers", `${shopFilter}select=*&order=created_at.desc`),
-        query("messages", "select=*,conversations!inner(customer_id,barbershop_id)&order=created_at.desc&limit=500"),
-        query("calls", "select=*&order=created_at.desc&limit=500"),
-        query("conversations", "select=*,customers(nome)&order=ultima_mensagem_em.desc.nullslast&limit=50"),
+        query("messages", "select=*,conversations!inner(customer_id,barbershop_id)&order=created_at.desc&limit=2000"),
+        query("calls", "select=*&order=created_at.desc&limit=2000"),
+        query("conversations", "select=*,customers(nome)&order=ultima_mensagem_em.desc.nullslast&limit=100"),
+        query("automated_messages_log", `${shopFilter}select=*&order=created_at.desc&limit=500`),
       ]);
       setBarbershops(shops);
       setCustomers(custs);
@@ -111,40 +165,65 @@ export default function Dashboard() {
       setCalls(filteredCalls);
       const filteredConvs = shopId ? convs.filter((c) => c.barbershop_id === shopId) : convs;
       setConversations(filteredConvs.map((c) => ({ ...c, customer_nome: ((c.customers as Record<string, unknown>) || {}).nome })));
+      setAutomations(autos);
       setLastRefresh(new Date());
     } catch (err) { console.error(err); }
     setLoading(false);
   }, []);
 
   useEffect(() => { fetchData(selectedShop); }, [selectedShop, fetchData]);
-
   useEffect(() => {
     const interval = setInterval(() => fetchData(selectedShop), 30000);
     return () => clearInterval(interval);
   }, [selectedShop, fetchData]);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const msgsToday = messages.filter((m) => (m.created_at as string)?.startsWith(today));
-  const msgsTodayIn = msgsToday.filter((m) => m.direcao === "inbound").length;
-  const msgsTodayOut = msgsToday.filter((m) => m.direcao === "outbound").length;
-  const callsToday = calls.filter((c) => (c.created_at as string)?.startsWith(today));
-  const missedToday = callsToday.filter((c) => MISSED_DISPOSITIONS.includes(c.disposition as string));
-  const answeredToday = callsToday.filter((c) => !MISSED_DISPOSITIONS.includes(c.disposition as string));
-  const missedRate = calls.length > 0 ? Math.round(calls.filter((c) => MISSED_DISPOSITIONS.includes(c.disposition as string)).length / calls.length * 100) : 0;
+  /* ── Filtered data by period ───────────────────────────────────── */
+  const pMessages = filterByPeriod(messages, "created_at", period);
+  const pCalls = filterByPeriod(calls, "created_at", period);
+  const pAutomations = filterByPeriod(automations, "created_at", period);
+  const { start: periodStart, days: periodDays } = getDateRange(period);
 
-  const msgDays = groupByDay(messages, "created_at", 14).map((d) => ({
-    ...d, inbound: ((d._items as Array<Record<string, unknown>>) || []).filter((m) => m.direcao === "inbound").length || 0,
-    outbound: ((d._items as Array<Record<string, unknown>>) || []).filter((m) => m.direcao === "outbound").length || 0,
-  }));
-  const callDays = groupByDay(calls, "created_at", 14).map((d) => ({
-    ...d, perdidas: ((d._items as Array<Record<string, unknown>>) || []).filter((c) => MISSED_DISPOSITIONS.includes(c.disposition as string)).length || 0,
-    atendidas: ((d._items as Array<Record<string, unknown>>) || []).filter((c) => !MISSED_DISPOSITIONS.includes(c.disposition as string)).length || 0,
-  }));
+  /* ── Operational KPIs ──────────────────────────────────────────── */
+  const msgsIn = pMessages.filter((m) => m.direcao === "inbound").length;
+  const msgsOut = pMessages.filter((m) => m.direcao === "outbound").length;
+  const missedCalls = pCalls.filter((c) => MISSED_DISPOSITIONS.includes(c.disposition as string));
+  const answeredCalls = pCalls.filter((c) => !MISSED_DISPOSITIONS.includes(c.disposition as string));
+  const missedRate = pCalls.length > 0 ? Math.round(missedCalls.length / pCalls.length * 100) : 0;
 
   const activeCustomers = customers.filter((c) => c.ultima_visita_calendar && daysBetween(c.ultima_visita_calendar as string, new Date().toISOString()) <= 30);
   const inactiveCustomers = customers.filter((c) => c.ultima_visita_calendar && daysBetween(c.ultima_visita_calendar as string, new Date().toISOString()) > 30);
   const newCustomers = customers.filter((c) => !c.ultima_visita_calendar);
-  const reactivationsSent = customers.filter((c) => c.reativacao_enviada_em).length;
+
+  const reactivationsSent = pAutomations.filter(a => (a.tipo as string) === "reactivation").length;
+  const missedCallFollowups = pAutomations.filter(a => (a.tipo as string) === "missed_call").length;
+  const promotionsSent = pAutomations.filter(a => (a.tipo as string) === "promotion").length;
+
+  /* ── ROI KPIs ──────────────────────────────────────────────────── */
+  const estimatedRecoveredCuts = Math.round(missedCallFollowups * CONVERSION_RATE);
+  const estimatedRevenue = estimatedRecoveredCuts * AVG_SERVICE_PRICE;
+
+  const uniqueConversations = pMessages.filter(m => m.direcao === "outbound").length;
+  const timeSavedMinutes = Math.round(uniqueConversations * AVG_CONV_MINUTES);
+  const timeSavedHours = (timeSavedMinutes / 60).toFixed(1);
+
+  const reactivationResponses = customers.filter(c => {
+    const sentAt = c.reativacao_enviada_em as string | undefined;
+    const lastMsg = c.ultima_mensagem_em as string | undefined;
+    return sentAt && lastMsg && new Date(lastMsg) > new Date(sentAt);
+  }).length;
+  const reactivationResponseRate = reactivationsSent > 0 ? Math.round(reactivationResponses / reactivationsSent * 100) : 0;
+
+  /* ── Chart data ────────────────────────────────────────────────── */
+  const msgDays = groupByDay(pMessages, "created_at", periodDays, periodStart).map((d) => ({
+    ...d,
+    inbound: ((d._items as Array<Record<string, unknown>>) || []).filter((m) => m.direcao === "inbound").length || 0,
+    outbound: ((d._items as Array<Record<string, unknown>>) || []).filter((m) => m.direcao === "outbound").length || 0,
+  }));
+  const callDays = groupByDay(pCalls, "created_at", periodDays, periodStart).map((d) => ({
+    ...d,
+    perdidas: ((d._items as Array<Record<string, unknown>>) || []).filter((c) => MISSED_DISPOSITIONS.includes(c.disposition as string)).length || 0,
+    atendidas: ((d._items as Array<Record<string, unknown>>) || []).filter((c) => !MISSED_DISPOSITIONS.includes(c.disposition as string)).length || 0,
+  }));
 
   const pieData = [
     { name: "Ativos", value: activeCustomers.length, color: "#22c55e" },
@@ -156,31 +235,55 @@ export default function Dashboard() {
     { id: "overview", label: "Visão Geral", icon: "📊" },
     { id: "customers", label: "Clientes", icon: "👥" },
     { id: "conversations", label: "Conversas", icon: "💬" },
+    { id: "automations", label: "Automações", icon: "⚡" },
   ];
+
+  const handleExport = () => {
+    const report = [{
+      periodo: period,
+      clientes_total: customers.length,
+      clientes_ativos: activeCustomers.length,
+      clientes_inativos: inactiveCustomers.length,
+      mensagens_total: pMessages.length,
+      mensagens_inbound: msgsIn,
+      mensagens_outbound: msgsOut,
+      chamadas_total: pCalls.length,
+      chamadas_perdidas: missedCalls.length,
+      chamadas_atendidas: answeredCalls.length,
+      taxa_perdidas: `${missedRate}%`,
+      followups_chamadas_perdidas: missedCallFollowups,
+      reativacoes_enviadas: reactivationsSent,
+      reativacoes_com_resposta: reactivationResponses,
+      taxa_resposta_reativacao: `${reactivationResponseRate}%`,
+      promocoes_enviadas: promotionsSent,
+      receita_estimada_recuperada: `${estimatedRevenue}€`,
+      tempo_poupado_horas: timeSavedHours,
+    }];
+    exportCSV(report, `crisol-report-${period}`);
+  };
 
   return (
     <div className="min-h-screen">
+      {/* Header */}
       <header className="border-b border-[--border] px-6 py-4 flex items-center justify-between sticky top-0 bg-[--bg]/90 backdrop-blur-xl z-10">
         <div className="flex items-center gap-4">
           <span className="text-2xl">✂️</span>
-          <h1 className="text-lg font-[--font-outfit] font-bold tracking-tight">
-            Crisol <span className="text-[--accent]">Dashboard</span>
-          </h1>
-          {barbershops.length > 1 && (
-            <select value={selectedShop || ""} onChange={e => setSelectedShop(e.target.value || null)}
-              className="bg-[--card] text-[--text] border border-[--border] rounded-lg px-3 py-1.5 text-sm font-mono cursor-pointer outline-none">
-              <option value="">Todas as barbearias</option>
-              {barbershops.map((s) => <option key={s.id as string} value={s.id as string}>{s.nome as string}</option>)}
-            </select>
-          )}
+          <h1 className="text-lg font-bold tracking-tight">Crisol <span className="text-[--accent]">Dashboard</span></h1>
+          <select value={selectedShop || ""} onChange={e => setSelectedShop(e.target.value || null)}
+            className="bg-[--card] text-[--text] border border-[--border] rounded-lg px-3 py-1.5 text-sm font-mono cursor-pointer outline-none">
+            <option value="">Todos os negócios</option>
+            {barbershops.map((s) => <option key={s.id as string} value={s.id as string}>{s.nome as string}</option>)}
+          </select>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <div className="hidden sm:flex items-center gap-1.5">
             <div className={`w-2 h-2 rounded-full ${loading ? "bg-amber-500 animate-pulse" : "bg-green-500"}`} />
-            <span className="text-[10px] text-[--text-dim] font-mono">
-              {lastRefresh ? `${fmtTime(lastRefresh.toISOString())} · auto 30s` : "…"}
-            </span>
+            <span className="text-[10px] text-[--text-dim] font-mono">{lastRefresh ? `${fmtTime(lastRefresh.toISOString())} · auto 30s` : "…"}</span>
           </div>
+          <button onClick={handleExport}
+            className="bg-[--card] text-[--text] border border-[--border] rounded-lg px-3 py-2 text-xs font-mono cursor-pointer hover:bg-[--card-hover] transition-all">
+            📥 Exportar
+          </button>
           <button onClick={() => fetchData(selectedShop)} disabled={loading}
             className="bg-[--accent] text-black border-none rounded-lg px-4 py-2 text-xs font-bold font-mono uppercase tracking-wider cursor-pointer disabled:opacity-50 hover:brightness-110 transition-all">
             {loading ? "…" : "↻ Refresh"}
@@ -188,28 +291,46 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <div className="flex border-b border-[--border] px-6">
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className={`border-b-2 px-5 py-3 text-sm font-mono font-medium transition-all cursor-pointer bg-transparent ${tab === t.id ? "border-[--accent] text-[--text]" : "border-transparent text-[--text-dim] hover:text-[--text]"}`}>
-            {t.icon} {t.label}
-          </button>
-        ))}
+      {/* Tabs + Period */}
+      <div className="flex items-center justify-between border-b border-[--border] px-6">
+        <div className="flex">
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              className={`border-b-2 px-5 py-3 text-sm font-mono font-medium transition-all cursor-pointer bg-transparent ${
+                tab === t.id ? "border-[--accent] text-[--text]" : "border-transparent text-[--text-dim] hover:text-[--text]"
+              }`}>
+              {t.icon} {t.label}
+            </button>
+          ))}
+        </div>
+        <PeriodSelector period={period} onChange={setPeriod} />
       </div>
 
       <main className="p-6 max-w-[1400px] mx-auto">
+        {/* ── Overview Tab ─────────────────────────────────────────── */}
         {tab === "overview" && (
           <>
-            <div className="flex gap-4 mb-6 flex-wrap">
-              <KpiCard icon="👥" label="Clientes" value={fmt(customers.length)} sub={`${activeCustomers.length} ativos · ${inactiveCustomers.length} inativos`} color="var(--blue)" />
-              <KpiCard icon="💬" label="Msgs hoje" value={fmt(msgsTodayIn + msgsTodayOut)} sub={`${msgsTodayIn} in · ${msgsTodayOut} out`} color="var(--green)" />
-              <KpiCard icon="📞" label="Chamadas hoje" value={fmt(callsToday.length)} sub={`${missedToday.length} perdidas · ${answeredToday.length} atendidas`} color="var(--purple)" />
-              <KpiCard icon="🚨" label="Taxa perdidas" value={`${missedRate}%`} sub={`${calls.length} chamadas total`} color={missedRate > 50 ? "var(--red)" : "var(--accent)"} />
-              <KpiCard icon="🔄" label="Reativações" value={fmt(reactivationsSent)} sub="mensagens enviadas" color="var(--accent)" />
+            {/* ROI Hero Cards */}
+            <div className="flex gap-4 mb-4 flex-wrap">
+              <KpiCard large icon="💰" label="Receita estimada recuperada" value={fmtEur(estimatedRevenue)}
+                sub={`${missedCallFollowups} follow-ups · ${estimatedRecoveredCuts} cortes estimados · a ${AVG_SERVICE_PRICE}€/corte`} color="var(--green)" />
+              <KpiCard large icon="⏱️" label="Tempo poupado" value={`${timeSavedHours}h`}
+                sub={`${uniqueConversations} mensagens geridas pelo agente · ~${AVG_CONV_MINUTES}min cada`} color="var(--blue)" />
             </div>
 
+            {/* Operational KPIs */}
+            <div className="flex gap-4 mb-6 flex-wrap">
+              <KpiCard icon="👥" label="Clientes" value={fmt(customers.length)} sub={`${activeCustomers.length} ativos · ${inactiveCustomers.length} inativos`} color="var(--blue)" />
+              <KpiCard icon="💬" label="Mensagens" value={fmt(pMessages.length)} sub={`${msgsIn} in · ${msgsOut} out`} color="var(--green)" />
+              <KpiCard icon="📞" label="Chamadas" value={fmt(pCalls.length)} sub={`${missedCalls.length} perdidas · ${answeredCalls.length} atendidas`} color="var(--purple)" />
+              <KpiCard icon="🚨" label="Taxa perdidas" value={`${missedRate}%`} sub={`de ${pCalls.length} chamadas`} color={missedRate > 50 ? "var(--red)" : "var(--accent)"} />
+              <KpiCard icon="📞" label="Chamadas recuperadas" value={fmt(missedCallFollowups)} sub="follow-ups WhatsApp enviados" color="var(--green)" />
+              <KpiCard icon="🔄" label="Reativações" value={fmt(reactivationsSent)} sub={`${reactivationResponseRate}% taxa resposta`} color="var(--accent)" />
+            </div>
+
+            {/* Charts */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              <ChartCard title="Mensagens · últimos 14 dias">
+              <ChartCard title={`Mensagens · últimos ${periodDays} dias`}>
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={msgDays} barGap={2}>
                     <XAxis dataKey="day" tick={{ fill: "#71717a", fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -220,7 +341,7 @@ export default function Dashboard() {
                   </BarChart>
                 </ResponsiveContainer>
               </ChartCard>
-              <ChartCard title="Chamadas · últimos 14 dias">
+              <ChartCard title={`Chamadas · últimos ${periodDays} dias`}>
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={callDays} barGap={2}>
                     <XAxis dataKey="day" tick={{ fill: "#71717a", fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -233,6 +354,7 @@ export default function Dashboard() {
               </ChartCard>
             </div>
 
+            {/* Segmentation + Conversations */}
             <div className="grid grid-cols-1 md:grid-cols-[300px_1fr] gap-4">
               <ChartCard title="Segmentação clientes">
                 {pieData.length > 0 ? (
@@ -260,18 +382,20 @@ export default function Dashboard() {
           </>
         )}
 
+        {/* ── Customers Tab ────────────────────────────────────────── */}
         {tab === "customers" && (
           <div className="bg-[--card] border border-[--border] rounded-xl overflow-hidden">
             <div className="grid grid-cols-[1fr_140px_100px_80px] gap-3 px-4 py-3 border-b border-[--border] text-[10px] uppercase tracking-[0.15em] text-[--text-dim] font-mono font-semibold">
               <div>Nome</div><div>Última visita</div><div>Ciclo</div><div>Estado</div>
             </div>
-            <div className="max-h-[500px] overflow-y-auto">
+            <div className="max-h-[600px] overflow-y-auto">
               {customers.map((c) => <CustomerRow key={c.id as string} c={c} />)}
               {customers.length === 0 && <div className="text-[--text-dim] text-center py-10">Sem clientes</div>}
             </div>
           </div>
         )}
 
+        {/* ── Conversations Tab ────────────────────────────────────── */}
         {tab === "conversations" && (
           <div className="bg-[--card] border border-[--border] rounded-xl overflow-hidden">
             <div className="max-h-[600px] overflow-y-auto">
@@ -279,6 +403,27 @@ export default function Dashboard() {
               {conversations.length === 0 && <div className="text-[--text-dim] text-center py-10">Sem conversas</div>}
             </div>
           </div>
+        )}
+
+        {/* ── Automations Tab ──────────────────────────────────────── */}
+        {tab === "automations" && (
+          <>
+            <div className="flex gap-4 mb-6 flex-wrap">
+              <KpiCard icon="📞" label="Follow-ups chamadas" value={fmt(missedCallFollowups)} sub="WhatsApp enviados após chamada perdida" color="var(--green)" />
+              <KpiCard icon="🔄" label="Reativações" value={fmt(reactivationsSent)} sub={`${reactivationResponseRate}% taxa de resposta`} color="var(--accent)" />
+              <KpiCard icon="🎯" label="Promoções" value={fmt(promotionsSent)} sub="mensagens de promoção enviadas" color="var(--blue)" />
+              <KpiCard icon="⚡" label="Total automações" value={fmt(pAutomations.length)} sub="mensagens automáticas no período" color="var(--purple)" />
+            </div>
+            <div className="bg-[--card] border border-[--border] rounded-xl overflow-hidden">
+              <div className="grid grid-cols-[auto_1fr_120px_80px] gap-3 px-4 py-3 border-b border-[--border] text-[10px] uppercase tracking-[0.15em] text-[--text-dim] font-mono font-semibold">
+                <div></div><div>Tipo</div><div>Data</div><div>Estado</div>
+              </div>
+              <div className="max-h-[500px] overflow-y-auto">
+                {pAutomations.map((a, i) => <AutomationRow key={(a.id as string) || i} log={a} />)}
+                {pAutomations.length === 0 && <div className="text-[--text-dim] text-center py-10">Sem automações no período selecionado</div>}
+              </div>
+            </div>
+          </>
         )}
       </main>
     </div>
